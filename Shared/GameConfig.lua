@@ -50,6 +50,13 @@ GameConfig.Animations = {
 	ledgeGrab = "rbxassetid://81878660258357",
 	ledgeClimbUp = "rbxassetid://78015306190560",
 	ledgeRoll = "rbxassetid://137964011666431",
+	fall = "rbxassetid://106920991553134",
+	vault = "rbxassetid://73282451301656",
+	wallRunLeft = "rbxassetid://139774057759638",
+	wallRunRight = "rbxassetid://133298588996180",
+	death1 = "rbxassetid://105252013156036",
+	death2 = "rbxassetid://77746860830710",
+	death3 = "rbxassetid://113581189403646",
 }
 
 -- ============= STAGES =============
