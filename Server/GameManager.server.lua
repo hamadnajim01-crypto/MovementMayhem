@@ -25,6 +25,7 @@ local Remotes = {
 	RoundInfo = createRemote("RoundInfo"),
 	SetRole = createRemote("SetRole"),
 	AdminCommand = createRemote("AdminCommand"),
+	SwordHit = createRemote("SwordHit"),
 }
 
 -- ============= DATA STORE =============
@@ -177,7 +178,7 @@ end
 -- Death player activates traps
 Remotes.ActivateTrap.OnServerEvent:Connect(function(player, trapName)
 	-- Admins can always activate traps
-	if GameConfig.Admins[player.UserId] then
+	if isAdmin(player) then
 		activateTrap(trapName)
 		return
 	end
@@ -476,6 +477,7 @@ end)
 Players.PlayerRemoving:Connect(function(player)
 	saveData(player)
 	PlayerData[player.UserId] = nil
+	tempAdmins[player.UserId] = nil -- remove temp admin on leave
 
 	-- If death leaves, end round
 	if roundState.active and player == roundState.death then
@@ -526,9 +528,14 @@ end)
 
 -- ============= ADMIN COMMANDS =============
 local BanStore = DataStoreService:GetDataStore("MovementMayhem_Bans")
+local tempAdmins = {} -- session-only admin powers {[UserId] = true}
+
+local function isAdmin(plr)
+	return GameConfig.Admins[plr.UserId] or tempAdmins[plr.UserId]
+end
 
 Remotes.AdminCommand.OnServerEvent:Connect(function(player, command, arg1, arg2)
-	if not GameConfig.Admins[player.UserId] then return end
+	if not isAdmin(player) then return end
 
 	if command == "newround" then
 		roundState.active = false
@@ -634,6 +641,24 @@ Remotes.AdminCommand.OnServerEvent:Connect(function(player, command, arg1, arg2)
 			local root = target.Character:FindFirstChild("HumanoidRootPart") or target.Character:FindFirstChild("Torso")
 			if root then root.Anchored = false end
 		end
+
+	elseif command == "tempadmin" then
+		-- Only real admins can grant temp admin
+		if not GameConfig.Admins[player.UserId] then return end
+		local target = Players:FindFirstChild(arg1)
+		if target then
+			tempAdmins[target.UserId] = true
+			print("[MovementMayhem] " .. target.Name .. " granted temp admin by " .. player.Name)
+		end
+
+	elseif command == "removetempadmin" then
+		-- Only real admins can revoke temp admin
+		if not GameConfig.Admins[player.UserId] then return end
+		local target = Players:FindFirstChild(arg1)
+		if target then
+			tempAdmins[target.UserId] = nil
+			print("[MovementMayhem] " .. target.Name .. " temp admin removed by " .. player.Name)
+		end
 	end
 end)
 
@@ -646,6 +671,57 @@ Players.PlayerAdded:Connect(function(plr)
 			plr:Kick("You are banned for " .. remaining .. " more minutes")
 		end
 	end)
+end)
+
+-- ============= SWORD DAMAGE =============
+local swordCooldowns = {} -- [userId] = last attack time
+
+Remotes.SwordHit.OnServerEvent:Connect(function(player, swordName, hitList)
+	if not player.Character then return end
+	local hum = player.Character:FindFirstChild("Humanoid")
+	if not hum or hum.Health <= 0 then return end
+
+	-- Check sword exists in config
+	local swordConfig = GameConfig.Swords[swordName]
+	if not swordConfig then return end
+
+	-- Check cooldown (server-side validation, slightly lenient)
+	local now = tick()
+	local lastHit = swordCooldowns[player.UserId] or 0
+	if now - lastHit < 0.3 then return end -- min 0.3s between hits server-side
+	swordCooldowns[player.UserId] = now
+
+	-- Verify player has the tool equipped
+	local tool = player.Character:FindFirstChild(swordName)
+	if not tool or not tool:IsA("Tool") then return end
+
+	local playerRoot = player.Character:FindFirstChild("HumanoidRootPart") or player.Character:FindFirstChild("Torso")
+	if not playerRoot then return end
+
+	-- Apply damage to valid targets
+	for _, targetName in ipairs(hitList) do
+		if type(targetName) ~= "string" then continue end
+
+		-- Find target in workspace (NPC or player character)
+		local target = workspace:FindFirstChild(targetName)
+		if not target then continue end
+		if target == player.Character then continue end
+
+		local targetHum = target:FindFirstChild("Humanoid")
+		local targetRoot = target:FindFirstChild("HumanoidRootPart") or target:FindFirstChild("Torso")
+		if not targetHum or not targetRoot then continue end
+		if targetHum.Health <= 0 then continue end
+
+		-- Distance check (server validation)
+		local dist = (targetRoot.Position - playerRoot.Position).Magnitude
+		if dist > swordConfig.hitboxRange + 5 then continue end -- small leeway
+
+		targetHum:TakeDamage(swordConfig.damage)
+	end
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	swordCooldowns[player.UserId] = nil
 end)
 
 print("[Movement Mayhem] Deathrun Server loaded!")

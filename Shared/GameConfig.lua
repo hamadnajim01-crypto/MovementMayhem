@@ -59,6 +59,31 @@ GameConfig.Animations = {
 	death3 = "rbxassetid://113581189403646",
 }
 
+-- ============= SWORDS =============
+GameConfig.Swords = {
+	demonics = {
+		damage = 100, -- one-shots NPCs
+		cooldown = 2,
+		animations = {
+			idle = "rbxassetid://103446053251072",
+			walk = "rbxassetid://85801031254660",
+			attack1 = "rbxassetid://73783123792256",
+			attack2 = "rbxassetid://83256224760662",
+			attack3 = "rbxassetid://72822538051256",
+			attack4 = "rbxassetid://115705929549995",
+		},
+		attackDurations = {
+			attack1 = 0.8,
+			attack2 = 0.8,
+			attack3 = 0.8,
+			attack4 = 1.0,
+		},
+		hitboxRange = 10,
+		hitboxWidth = 6,
+	},
+	-- katana and kife will be added later
+}
+
 -- ============= STAGES =============
 -- Stages are folders in Workspace named "Stage1", "Stage2", etc.
 -- Each stage has a SpawnPart and a FinishPart

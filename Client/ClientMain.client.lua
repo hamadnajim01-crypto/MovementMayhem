@@ -23,6 +23,7 @@ local Remotes = {
 	ActivateTrap = ReplicatedStorage:WaitForChild("ActivateTrap"),
 	RoundInfo = ReplicatedStorage:WaitForChild("RoundInfo"),
 	SetRole = ReplicatedStorage:WaitForChild("SetRole"),
+	AdminCommand = ReplicatedStorage:WaitForChild("AdminCommand"),
 }
 
 -- ============= STATE =============
@@ -133,6 +134,11 @@ local function onCharacterAdded(char)
 	-- Auto-run: always at sprint speed
 	humanoid.WalkSpeed = GameConfig.Player.sprintSpeed
 	humanoid.JumpPower = GameConfig.Player.jumpHeight * 10
+
+	-- Sword tool listeners
+	task.defer(function()
+		setupToolListeners()
+	end)
 
 	-- Death animation
 	humanoid.Died:Connect(function()
@@ -546,8 +552,8 @@ if isAdmin then
 
 	local panelFrame = Instance.new("Frame")
 	panelFrame.Name = "PanelFrame"
-	panelFrame.Size = UDim2.new(0, 400, 0, 580)
-	panelFrame.Position = UDim2.new(0.5, -200, 0.5, -290)
+	panelFrame.Size = UDim2.new(0, 400, 0, 620)
+	panelFrame.Position = UDim2.new(0.5, -200, 0.5, -310)
 	panelFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
 	panelFrame.BackgroundTransparency = 0.02
 	panelFrame.Visible = false
@@ -766,9 +772,9 @@ if isAdmin then
 		return box
 	end
 
-	speedInput = makeInput("Speed (38)", 0, 85)
-	jumpInput = makeInput("Jump (72)", 90, 85)
-	local banInput = makeInput("Ban mins (60)", 180, 100)
+	speedInput = makeInput("Speed", 0, 85)
+	jumpInput = makeInput("Jump", 90, 85)
+	local banInput = makeInput("Ban mins", 180, 100)
 
 	-- ====== SERVER COMMANDS ======
 	local srvLabel = Instance.new("TextLabel")
@@ -860,7 +866,7 @@ if isAdmin then
 
 	-- Player action buttons
 	local actFrame = Instance.new("Frame")
-	actFrame.Size = UDim2.new(1, -20, 0, 90)
+	actFrame.Size = UDim2.new(1, -20, 0, 130)
 	actFrame.Position = UDim2.new(0, 10, 0, 445)
 	actFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 40)
 	actFrame.Parent = panelFrame
@@ -905,6 +911,22 @@ if isAdmin then
 
 	local unfreezeBtn = makeBtn("Unfreeze", Color3.fromRGB(80, 200, 80), 7, actFrame)
 	unfreezeBtn.MouseButton1Click:Connect(function() plrCmd("unfreezeplayer") end)
+
+	local trustBtn = makeBtn("Trust", Color3.fromRGB(255, 180, 30), 8, actFrame)
+	trustBtn.MouseButton1Click:Connect(function()
+		if selectedPlayer then
+			adminCmd("tempadmin", selectedPlayer)
+			trustBtn.Text = "Trusted!"; task.delay(1, function() trustBtn.Text = "Trust" end)
+		end
+	end)
+
+	local untrustBtn = makeBtn("Untrust", Color3.fromRGB(180, 100, 30), 9, actFrame)
+	untrustBtn.MouseButton1Click:Connect(function()
+		if selectedPlayer then
+			adminCmd("removetempadmin", selectedPlayer)
+			untrustBtn.Text = "Removed!"; task.delay(1, function() untrustBtn.Text = "Untrust" end)
+		end
+	end)
 
 	-- Build player list
 	local function refreshPlayerList()
@@ -995,6 +1017,146 @@ if isAdmin then
 	task.defer(refreshPlayerList)
 end
 
+-- ============= SWORD COMBAT =============
+local SwordRemote = ReplicatedStorage:WaitForChild("SwordHit", 5)
+local equippedSword = nil
+local swordAnims = {}
+local swordCombo = 0
+local swordCooldownEnd = 0
+local swordAttacking = false
+
+local function loadSwordAnims(swordName)
+	if not animator then return end
+	local config = GameConfig.Swords[swordName]
+	if not config then return end
+
+	swordAnims = {}
+	for name, id in pairs(config.animations) do
+		local anim = Instance.new("Animation")
+		anim.AnimationId = id
+		swordAnims[name] = animator:LoadAnimation(anim)
+		if name == "idle" then
+			swordAnims[name].Priority = Enum.AnimationPriority.Movement
+		elseif name == "walk" then
+			swordAnims[name].Priority = Enum.AnimationPriority.Movement
+		else
+			swordAnims[name].Priority = Enum.AnimationPriority.Action3
+		end
+	end
+end
+
+local function stopSwordAnims()
+	for name, anim in pairs(swordAnims) do
+		anim:Stop()
+	end
+end
+
+local function swordAttack()
+	if not equippedSword or swordAttacking then return end
+	local config = GameConfig.Swords[equippedSword]
+	if not config then return end
+	if tick() < swordCooldownEnd then return end
+
+	swordAttacking = true
+	swordCombo = swordCombo + 1
+	if swordCombo > 4 then swordCombo = 1 end
+
+	local attackName = "attack" .. swordCombo
+	local duration = config.attackDurations[attackName] or 0.8
+
+	-- Stop movement anims, play attack
+	if swordAnims[attackName] then
+		swordAnims[attackName]:Play(0.05)
+	end
+
+	-- Hitbox check — find NPCs/players in front
+	if rootPart and SwordRemote then
+		local hitList = {}
+		local origin = rootPart.Position
+		local lookDir = rootPart.CFrame.LookVector
+
+		for _, target in ipairs(workspace:GetDescendants()) do
+			if target:IsA("Humanoid") and target.Health > 0 and target.Parent ~= character then
+				local targetRoot = target.Parent:FindFirstChild("HumanoidRootPart") or target.Parent:FindFirstChild("Torso")
+				if targetRoot then
+					local diff = targetRoot.Position - origin
+					local dist = diff.Magnitude
+					if dist <= config.hitboxRange then
+						local dot = lookDir:Dot(diff.Unit)
+						if dot > 0.3 then -- in front arc
+							table.insert(hitList, target.Parent.Name)
+						end
+					end
+				end
+			end
+		end
+
+		if #hitList > 0 then
+			SwordRemote:FireServer(equippedSword, hitList)
+		end
+	end
+
+	-- Wait for attack animation to finish, then allow next attack
+	task.delay(duration, function()
+		if swordAnims[attackName] then
+			swordAnims[attackName]:Stop(0.2)
+		end
+		swordAttacking = false
+	end)
+
+	-- If combo is complete (4 hits), apply cooldown
+	if swordCombo >= 4 then
+		swordCooldownEnd = tick() + config.cooldown
+		swordCombo = 0
+	end
+end
+
+-- Detect tool equip/unequip
+local function onToolEquipped(tool)
+	local swordConfig = GameConfig.Swords[tool.Name]
+	if swordConfig then
+		equippedSword = tool.Name
+		swordCombo = 0
+		swordCooldownEnd = 0
+		loadSwordAnims(tool.Name)
+
+		-- Play sword idle
+		if swordAnims.idle then
+			stopAnim("idle")
+			swordAnims.idle:Play(0.2)
+		end
+
+		-- Connect click to attack
+		tool.Activated:Connect(function()
+			swordAttack()
+		end)
+	end
+end
+
+local function onToolUnequipped(tool)
+	if GameConfig.Swords[tool.Name] then
+		equippedSword = nil
+		stopSwordAnims()
+		swordAnims = {}
+		swordCombo = 0
+		swordAttacking = false
+	end
+end
+
+-- Watch for tools
+local function setupToolListeners()
+	if not character then return end
+	for _, tool in ipairs(character:GetChildren()) do
+		if tool:IsA("Tool") then onToolEquipped(tool) end
+	end
+	character.ChildAdded:Connect(function(child)
+		if child:IsA("Tool") then onToolEquipped(child) end
+	end)
+	character.ChildRemoved:Connect(function(child)
+		if child:IsA("Tool") then onToolUnequipped(child) end
+	end)
+end
+
 -- ============= INPUT =============
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if gameProcessed then return end
@@ -1007,6 +1169,9 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	end
 
 	if not humanoid or humanoid.Health <= 0 then return end
+
+	-- No parkour when sword equipped
+	if equippedSword then return end
 
 	if input.KeyCode == Enum.KeyCode.C then
 		if humanoid.MoveDirection.Magnitude > 0.1 then
@@ -1054,23 +1219,24 @@ RunService.Heartbeat:Connect(function(dt)
 		end)
 	end
 
-	-- Wall run / ledge grab when in air
-	if not state.grounded and not state.dashing and not state.charging then
-		if humanoid.MoveDirection.Magnitude > 0.1 then
-			tryWallRun()
+	-- Wall run / ledge grab / vault — disabled when sword equipped
+	if not equippedSword then
+		if not state.grounded and not state.dashing and not state.charging then
+			if humanoid.MoveDirection.Magnitude > 0.1 then
+				tryWallRun()
+			end
+			tryLedgeGrab()
 		end
-		tryLedgeGrab()
-	end
 
-	-- Vault check when running
-	if state.grounded and humanoid.MoveDirection.Magnitude > 0.1 then
-		if not state.sliding and not state.dashing then
-			tryVault()
+		if state.grounded and humanoid.MoveDirection.Magnitude > 0.1 then
+			if not state.sliding and not state.dashing then
+				tryVault()
+			end
 		end
 	end
 
 	-- Animation states
-	if state.sliding or state.dashing or state.wallRunning or state.ledgeGrabbing or state.vaulting then
+	if state.sliding or state.dashing or state.wallRunning or state.ledgeGrabbing or state.vaulting or swordAttacking then
 		return
 	end
 
@@ -1097,45 +1263,58 @@ RunService.Heartbeat:Connect(function(dt)
 			stopAnim("crouchIdle")
 			stopAnim("crouchMove")
 
-			-- Walk when slow, run when fast
-			local runThreshold = GameConfig.Player.walkSpeed
-			if state.currentSpeed < runThreshold then
+			-- Sword walk override
+			if equippedSword and swordAnims.walk then
+				stopAnim("walk")
 				stopAnim("run")
-				playAnim("walk")
-
+				stopAnim("tiltLeft")
+				stopAnim("tiltRight")
 				stopAnim("tiltLeftRun")
 				stopAnim("tiltRightRun")
 				stopAnim("tiltBack")
-				if rootPart then
-					local localDir = rootPart.CFrame:VectorToObjectSpace(humanoid.MoveDirection)
-					stopAnim("tiltLeft")
-					stopAnim("tiltRight")
-					if localDir.X < -0.5 then
-						playAnim("tiltLeft")
-					elseif localDir.X > 0.5 then
-						playAnim("tiltRight")
-					end
-				end
+				if swordAnims.idle and swordAnims.idle.IsPlaying then swordAnims.idle:Stop(0.2) end
+				if not swordAnims.walk.IsPlaying then swordAnims.walk:Play(0.2) end
 			else
-				stopAnim("walk")
-				playAnim("run")
+				-- Walk when slow, run when fast
+				local runThreshold = GameConfig.Player.walkSpeed
+				if state.currentSpeed < runThreshold then
+					stopAnim("run")
+					playAnim("walk")
 
-				-- Tilt animations while running
-				if rootPart then
-					local localDir = rootPart.CFrame:VectorToObjectSpace(humanoid.MoveDirection)
-					stopAnim("tiltLeft")
-					stopAnim("tiltRight")
 					stopAnim("tiltLeftRun")
 					stopAnim("tiltRightRun")
 					stopAnim("tiltBack")
-
-					if localDir.X < -0.5 then
-						playAnim("tiltLeftRun")
-					elseif localDir.X > 0.5 then
-						playAnim("tiltRightRun")
+					if rootPart then
+						local localDir = rootPart.CFrame:VectorToObjectSpace(humanoid.MoveDirection)
+						stopAnim("tiltLeft")
+						stopAnim("tiltRight")
+						if localDir.X < -0.5 then
+							playAnim("tiltLeft")
+						elseif localDir.X > 0.5 then
+							playAnim("tiltRight")
+						end
 					end
-					if localDir.Z > 0.3 then
-						playAnim("tiltBack")
+				else
+					stopAnim("walk")
+					playAnim("run")
+
+					-- Tilt animations while running
+					if rootPart then
+						local localDir = rootPart.CFrame:VectorToObjectSpace(humanoid.MoveDirection)
+						stopAnim("tiltLeft")
+						stopAnim("tiltRight")
+						stopAnim("tiltLeftRun")
+						stopAnim("tiltRightRun")
+						stopAnim("tiltBack")
+
+						if localDir.X < -0.5 then
+							playAnim("tiltLeftRun")
+						elseif localDir.X > 0.5 then
+							playAnim("tiltRightRun")
+						end
+						if localDir.Z > 0.3 then
+							playAnim("tiltBack")
+						end
 					end
 				end
 			end
@@ -1149,7 +1328,15 @@ RunService.Heartbeat:Connect(function(dt)
 			stopAnim("tiltLeftRun")
 			stopAnim("tiltRightRun")
 			stopAnim("tiltBack")
-			playAnim("idle")
+
+			-- Sword idle override
+			if equippedSword and swordAnims.idle then
+				stopAnim("idle")
+				if not swordAnims.idle.IsPlaying then swordAnims.idle:Play(0.2) end
+				if swordAnims.walk and swordAnims.walk.IsPlaying then swordAnims.walk:Stop(0.2) end
+			else
+				playAnim("idle")
+			end
 		end
 	else
 		-- In air

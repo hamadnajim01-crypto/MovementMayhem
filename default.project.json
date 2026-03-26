@@ -23,9 +23,7 @@
       "$className": "StarterPlayer",
       "$ignoreUnknownInstances": true,
       "$properties": {
-        "GameSettingsAvatar": "R6",
-        "DevEnableMouseLock": false,
-        "EnableMouseLockOption": false
+        "GameSettingsAvatar": "R6"
       },
 
       "StarterPlayerScripts": {
